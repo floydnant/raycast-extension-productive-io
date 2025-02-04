@@ -1,17 +1,9 @@
 import { Action, ActionPanel, Detail, Icon, List, showToast, Toast } from "@raycast/api";
 import { showFailureToast, useFetch } from "@raycast/utils";
+import "isomorphic-fetch";
 import { preferences } from "./preferences";
 import { Service, TimeEntry, Timer } from "./productiveio-api.types";
-import {
-  formatDateRelative,
-  formatDuration,
-  isCurrentWeek,
-  isToday,
-  isWithinLast7Days,
-  isYesterday,
-  stripHtml,
-} from "./utils";
-import "isomorphic-fetch";
+import { formatDateRelative, formatDuration, isToday, isYesterday, stripHtml } from "./utils";
 
 const baseUrl = "https://api.productive.io/api";
 
@@ -21,9 +13,18 @@ const productiveHeaders = {
 };
 
 export default function Command() {
+  const now = new Date().valueOf();
+  const oneDay = 1000 * 60 * 60 * 24;
+  const todayString = new Date(now).toISOString().split("T")[0];
+  const timeSpanDays = parseInt(preferences.visibleTimeSpanDays);
+  const firstVisibleDate = new Date(now - oneDay * timeSpanDays).toISOString().split("T")[0];
+
+  console.log({ firstVisibleDate });
+
+  // @TODO: for some reason this will only fetch data for the last 7 days
   const timeEntries = useFetch<{
     data: TimeEntry[];
-  }>(`${baseUrl}/v2/time_entries?include=service,task,person`, {
+  }>(`${baseUrl}/v2/time_entries?include=service,task,person&filter[after]=${firstVisibleDate}`, {
     keepPreviousData: true,
     headers: productiveHeaders,
   });
@@ -44,11 +45,6 @@ export default function Command() {
   if (sections.error) {
     console.error(sections.error);
   }
-
-  const now = new Date().valueOf();
-  const oneDay = 1000 * 60 * 60 * 24;
-  const todayString = new Date(now).toISOString().split("T")[0];
-  const yesterday = new Date(now - oneDay).toISOString().split("T")[0];
 
   const timers = useFetch<{
     data: Timer[];
@@ -238,59 +234,67 @@ export default function Command() {
   };
 
   if (timeEntries.data) {
-    const entries = timeEntries.data.data
-      .filter((entry) => isWithinLast7Days(new Date(entry.attributes.date)))
-      .map((entry) => {
-        const service = services.data?.data.find((service) => service.id === entry.relationships.service.data.id);
-        const notes = stripHtml(entry.attributes.note || "");
-        const section = sections.data?.data.find((section) => section.id === service?.relationships.section.data.id);
+    console.log(
+      timeEntries.data.data
+        .map((entry) => {
+          return entry.attributes.started_at || entry.attributes.timer_started_at;
+        })
+        .join("\n"),
+    );
 
-        const title = [
-          notes ? "" : service?.attributes.name,
-          preferences.simplifyJiraLinks ? notes.replace(/https?:\/\/\w+.atlassian\.net\/browse\//, "") : notes,
-        ]
-          .filter(Boolean)
-          .join(" / ")
-          .trim();
+    const entries = timeEntries.data.data.map((entry) => {
+      const service = services.data?.data.find((service) => service.id === entry.relationships.service.data.id);
+      const notes = stripHtml(entry.attributes.note || "");
+      const section = sections.data?.data.find((section) => section.id === service?.relationships.section.data.id);
 
-        const isRunning = entry.attributes.timer_stopped_at === null && entry.attributes.timer_started_at !== null;
-        const isEntryToday = isToday(new Date(entry.attributes.date));
-        const startedAt = entry.attributes.started_at ? new Date(entry.attributes.started_at) : null;
-        const startedAtString = startedAt?.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
+      const title = [
+        notes ? "" : service?.attributes.name,
+        preferences.simplifyJiraLinks ? notes.replace(/https?:\/\/\w+.atlassian\.net\/browse\//, "") : notes,
+      ]
+        .filter(Boolean)
+        .join(" / ")
+        .trim();
 
-        const stoppedAt = entry.attributes.timer_stopped_at ? new Date(entry.attributes.timer_stopped_at) : null;
-        const stoppedAtString = stoppedAt
-          ? stoppedAt.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" })
-          : "";
+      const isRunning = entry.attributes.timer_stopped_at === null && entry.attributes.timer_started_at !== null;
+      const isEntryToday = isToday(new Date(entry.attributes.date));
 
-        const durationMins = isRunning
-          ? Math.round(((stoppedAt || new Date()).valueOf() - (startedAt || new Date()).valueOf()) / 1000 / 60)
-          : entry.attributes.time;
-        const durationString = formatDuration(durationMins);
+      const startedAtStr = entry.attributes.started_at || entry.attributes.timer_started_at;
+      const startedAt = startedAtStr ? new Date(startedAtStr) : null;
+      const startedAtFormatted = startedAt?.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
 
-        const absDateString = startedAt?.toISOString().split("T")[0];
-        const relDateString = isEntryToday
-          ? ""
-          : isYesterday(new Date(entry.attributes.date))
-            ? "Yesterday"
-            : formatDateRelative(startedAt || new Date());
+      const stoppedAt = entry.attributes.timer_stopped_at ? new Date(entry.attributes.timer_stopped_at) : null;
+      const stoppedAtFormatted = stoppedAt
+        ? stoppedAt.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" })
+        : "";
 
-        return {
-          ...entry,
-          service,
-          section,
-          title,
-          notes,
-          isRunning,
-          isToday: isEntryToday,
-          startedAtString,
-          stoppedAtString,
-          durationMins,
-          durationString,
-          relDateString,
-          absDateString,
-        };
-      });
+      const durationMins = isRunning
+        ? Math.round(((stoppedAt || new Date()).valueOf() - (startedAt || new Date()).valueOf()) / 1000 / 60)
+        : entry.attributes.time;
+      const durationString = formatDuration(durationMins);
+
+      const absDateString = startedAt?.toISOString().split("T")[0];
+      const relDateString = isEntryToday
+        ? ""
+        : isYesterday(new Date(entry.attributes.date))
+          ? "Yesterday"
+          : formatDateRelative(startedAt || new Date());
+
+      return {
+        ...entry,
+        service,
+        section,
+        title,
+        notes,
+        isRunning,
+        isToday: isEntryToday,
+        startedAtFormatted,
+        stoppedAtFormatted,
+        durationMins,
+        durationString,
+        relDateString,
+        absDateString,
+      };
+    });
 
     const totalDuration = entries.filter((entry) => entry.isToday).reduce((acc, entry) => acc + entry.durationMins, 0);
 
@@ -302,10 +306,10 @@ export default function Command() {
         {entries.map((entry) => {
           const timeString =
             (entry.isRunning
-              ? entry.startedAtString
-                ? `Started at ${entry.startedAtString}`
+              ? entry.startedAtFormatted
+                ? `Started at ${entry.startedAtFormatted}`
                 : "No timer started"
-              : `${entry.startedAtString} - ${entry.stoppedAtString}`) + ` (${entry.durationString})`;
+              : `${entry.startedAtFormatted} - ${entry.stoppedAtFormatted}`) + ` (${entry.durationString})`;
 
           return (
             <List.Item
@@ -378,12 +382,12 @@ ${JSON.stringify(entry, null, 4)}
                     ></Action>
                   )}
                   <Action.CopyToClipboard
-                    title="Copy Time Entry Notes"
+                    title="Copy Notes"
                     shortcut={{ modifiers: ["cmd"], key: "c" }}
                     content={entry.notes}
                   ></Action.CopyToClipboard>
                   <Action.CopyToClipboard
-                    title="Copy Time Entry Notes as Html"
+                    title="Copy Notes as Html for Some Reason"
                     content={entry.attributes.note || ""}
                   ></Action.CopyToClipboard>
                 </ActionPanel>

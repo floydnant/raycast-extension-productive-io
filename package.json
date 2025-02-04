@@ -47,6 +47,36 @@
       "default": true,
       "required": false,
       "type": "checkbox"
+    },
+    {
+      "title": "Visible Time Span",
+      "description": "The number of days into the past to show time entries for",
+      "name": "visibleTimeSpanDays",
+      "default": "7",
+      "required": false,
+      "type": "dropdown",
+      "data": [
+        {
+          "title": "3 Days",
+          "value": "3"
+        },
+        {
+          "title": "7 Days",
+          "value": "7"
+        },
+        {
+          "title": "10 Days",
+          "value": "10"
+        },
+        {
+          "title": "14 Days",
+          "value": "14"
+        },
+        {
+          "title": "30 Days",
+          "value": "30"
+        }
+      ]
     }
   ],
   "dependencies": {
